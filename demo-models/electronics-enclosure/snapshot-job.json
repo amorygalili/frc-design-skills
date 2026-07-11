@@ -1,0 +1,11 @@
+{
+  "input": "enclosure.step",
+  "mode": "view",
+  "outputs": [
+    { "path": "render/iso.png", "camera": "iso" },
+    { "path": "render/iso_opposite.png", "camera": { "direction": [-1, 1, -0.8] } },
+    { "path": "render/top_ortho.png", "camera": "top" },
+    { "path": "render/front_ortho.png", "camera": "front" }
+  ],
+  "render": { "viewLabels": true, "padding": 0.12, "sizeProfile": "assembly" }
+}

@@ -1,0 +1,9 @@
+{
+  "input": "enclosure.step",
+  "mode": "section",
+  "outputs": [
+    { "path": "render/section_y.png", "camera": "iso" }
+  ],
+  "section": { "plane": "xz", "offset": 0.0 },
+  "render": { "viewLabels": true, "padding": 0.12, "sizeProfile": "assembly" }
+}

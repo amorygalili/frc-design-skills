@@ -1,0 +1,14 @@
+{
+  "input": "step_parts_demo.step",
+  "mode": "view",
+  "outputs": [
+    { "path": "render/iso.png", "camera": "iso" },
+    { "path": "render/top_ortho.png", "camera": "top" },
+    {
+      "path": "render/iso_exploded.png",
+      "camera": "iso",
+      "display": { "exploded": { "enabled": true, "axis": "z", "spacing": 30 } }
+    }
+  ],
+  "render": { "viewLabels": true, "padding": 0.12, "sizeProfile": "diagnostic" }
+}

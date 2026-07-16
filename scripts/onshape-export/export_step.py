@@ -174,6 +174,76 @@ def list_elements(client: OnshapeClient, did: str, itype: str, iid: str) -> list
     return client.get_json(f"/documents/d/{did}/{itype}/{iid}/elements")
 
 
+def get_configuration(client: OnshapeClient, did: str, itype: str, iid: str, eid: str) -> dict[str, Any]:
+    return client.get_json(f"/elements/d/{did}/{itype}/{iid}/e/{eid}/configuration")
+
+
+def summarize_configuration(cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turns a raw BTConfigurationResponse into a compact, human-readable list."""
+    summary = []
+    for p in cfg.get("configurationParameters", []):
+        bt = p.get("btType", "")
+        entry: dict[str, Any] = {
+            "parameterId": p.get("parameterId"),
+            "parameterName": p.get("parameterName"),
+            "default": p.get("defaultValue"),
+        }
+        if "Enum" in bt:
+            entry["type"] = "enum"
+            entry["options"] = [
+                {"name": o.get("optionName"), "value": o.get("option")}
+                for o in p.get("options", [])
+            ]
+        elif "Boolean" in bt:
+            entry["type"] = "boolean"
+        elif "Quantity" in bt:
+            entry["type"] = "quantity"
+            entry["rangeAndDefault"] = p.get("rangeAndDefault")
+        else:
+            entry["type"] = "string"
+        summary.append(entry)
+    return summary
+
+
+def resolve_configuration_string(cfg: dict[str, Any], pairs: list[str]) -> str:
+    """Resolves ["Parameter Name=Option Name", ...] into Onshape's encoded
+    configuration body string ("paramId=value;paramId2=value2...") by
+    matching human-readable parameter/option names against the live schema.
+    """
+    params_by_name = {
+        p.get("parameterName", "").lower(): p for p in cfg.get("configurationParameters", [])
+    }
+
+    resolved: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise OnshapeExportError(f"--config value must be 'Parameter Name=Option Name', got: {pair!r}")
+        param_name, _, option_name = pair.partition("=")
+        param_name, option_name = param_name.strip(), option_name.strip()
+
+        param = params_by_name.get(param_name.lower())
+        if not param:
+            available = ", ".join(p.get("parameterName", "?") for p in cfg.get("configurationParameters", []))
+            raise OnshapeExportError(f"Unknown configuration parameter {param_name!r}. Available: {available}")
+
+        param_id = param["parameterId"]
+        if "Enum" in param.get("btType", ""):
+            options = {o.get("optionName", "").lower(): o.get("option") for o in param.get("options", [])}
+            value = options.get(option_name.lower())
+            if value is None:
+                available = ", ".join(o.get("optionName", "?") for o in param.get("options", []))
+                raise OnshapeExportError(
+                    f"Unknown option {option_name!r} for parameter {param_name!r}. Available: {available}"
+                )
+        else:
+            # Quantity/boolean/string parameters: pass the given value straight through.
+            value = option_name
+
+        resolved[param_id] = value
+
+    return ";".join(f"{pid}={urllib.parse.quote(value, safe='')}" for pid, value in resolved.items())
+
+
 def sanitize_filename(name: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
     return slug or "part"
@@ -242,7 +312,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--instance-id", help="Workspace/version/microversion id. If omitted, the default workspace is used.")
     parser.add_argument("--element-id", help="Export only this element (tab). If omitted, all Part Studio/Assembly tabs are exported.")
     parser.add_argument("--types", nargs="+", default=sorted(EXPORTABLE_TYPES), choices=sorted(EXPORTABLE_TYPES), help="Element types to include when exporting a whole document.")
-    parser.add_argument("--configuration", help="Onshape configuration string (URL-encoded key=value&... form) applied to every exported element.")
+    parser.add_argument("--configuration", help="Raw Onshape-encoded configuration string ('paramId=value;paramId2=value2') applied to every exported element. See --list-configs to discover values, or use --config for human-readable names.")
+    parser.add_argument("--config", action="append", default=[], metavar="PARAM=OPTION", help="Human-readable configuration choice, e.g. --config 'Thickness=1/16\"'. Repeatable. Only valid when exactly one element is targeted (use --element-id or a /e/<id> URL).")
+    parser.add_argument("--list-configs", action="store_true", help="Print the configuration parameters/options for a single targeted element (requires --element-id or a /e/<id> URL) and exit.")
     parser.add_argument("--out-dir", default="./parts", help="Directory to write .step files into. Default: ./parts")
     parser.add_argument("--list", action="store_true", help="List exportable tabs and exit, without downloading anything.")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing .step files.")
@@ -291,6 +363,28 @@ def main() -> int:
                 print(f"{el.get('id')}\t{el_type}\t{el.get('name')}")
             return 0
 
+        if args.list_configs:
+            if len(elements) != 1:
+                raise OnshapeExportError(
+                    "--list-configs requires exactly one targeted element. Pass --element-id or a /e/<id> URL."
+                )
+            eid = elements[0]["id"]
+            cfg = get_configuration(client, did, itype, iid, eid)
+            json.dump(summarize_configuration(cfg), sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return 0
+
+        configuration = args.configuration
+        if args.config:
+            if len(elements) != 1:
+                raise OnshapeExportError(
+                    "--config requires exactly one targeted element. Pass --element-id or a /e/<id> URL."
+                )
+            if configuration:
+                raise OnshapeExportError("Use either --configuration or --config, not both.")
+            cfg = get_configuration(client, did, itype, iid, elements[0]["id"])
+            configuration = resolve_configuration_string(cfg, args.config)
+
         out_dir = Path(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -299,7 +393,8 @@ def main() -> int:
             eid = el["id"]
             name = el.get("name", eid)
             el_type = el.get("elementType") or el.get("type")
-            filename = sanitize_filename(name) + ".step"
+            name_suffix = "_" + "_".join(sanitize_filename(v) for v in args.config) if args.config else ""
+            filename = sanitize_filename(name) + name_suffix + ".step"
             path = out_dir / filename
             if path.exists() and not args.overwrite:
                 print(f"skip (exists): {path}", file=sys.stderr)
@@ -308,7 +403,7 @@ def main() -> int:
 
             print(f"exporting {el_type} '{name}' ({eid}) ...", file=sys.stderr)
             data = export_element_to_step(
-                client, did, itype, iid, eid, el_type, args.configuration, args.poll_interval, args.poll_timeout
+                client, did, itype, iid, eid, el_type, configuration, args.poll_interval, args.poll_timeout
             )
             path.write_bytes(data)
             results.append({"elementId": eid, "name": name, "type": el_type, "path": str(path), "byteSize": len(data)})

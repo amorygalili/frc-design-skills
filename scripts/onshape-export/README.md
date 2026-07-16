@@ -67,10 +67,47 @@ python export_step.py \
   --out-dir ../../demo-models/frc-design-lib/parts
 ```
 
-Each tab is exported via Onshape's Translations API (STEP AP242) and written
-as `<sanitized-name>.step`. Configurable parts export with their current/
-default configuration unless you pass `--configuration "key=value&key2=value2"`
-(Onshape's URL-encoded configuration string).
+Each tab is exported via Onshape's Translations API (STEP AP214) and written
+as `<sanitized-name>.step`. Configurable parts (see below) export with their
+default configuration unless you pass `--config`.
+
+## 5. Configurable parts
+
+Many library parts (bushings, bearings, etc.) are one Part Studio with dozens
+of size/option variants via Onshape configurations. Exporting "everything"
+for a heavily configured part can mean hundreds of files, so by default you
+only get the default configuration — pick specific ones explicitly.
+
+List the available parameters/options for a single tab:
+
+```sh
+python export_step.py \
+  --url "https://cad.onshape.com/documents/<did>/v/<vid>/e/<eid>" \
+  --list-configs
+```
+
+This prints each parameter's name and, for enum parameters, every named
+option (e.g. `"3.75\" ID x 5\" OD"`). Then export a specific combination by
+human-readable name — `--config` is repeatable, one per parameter:
+
+```sh
+python export_step.py \
+  --url "https://cad.onshape.com/documents/<did>/v/<vid>/e/<eid>" \
+  --config 'Thickness=1/16"' \
+  --config 'Configuration=3.75" ID x 5" OD' \
+  --out-dir ../../demo-models/frc-design-lib/bearings-and-bushings
+```
+
+The output filename includes the chosen option names so different sizes of
+the same part don't collide (e.g.
+`thrust_bushing_mcm_thickness_1_16_configuration_3_75_id_x_5_od.step`).
+`--config` only works when exactly one tab is targeted (via `--element-id`
+or a `/e/<id>` URL) — the parameter/option names are specific to that part's
+configuration schema.
+
+If you already have Onshape's raw encoded configuration string (e.g. copied
+from a URL), pass it directly with `--configuration "paramId=value;paramId2=value2"`
+instead of `--config`.
 
 ## Notes
 

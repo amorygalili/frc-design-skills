@@ -1,0 +1,4 @@
+interface:
+  display_name: "FRC Design Lib"
+  short_description: "Search and download COTS FRC parts from FRC Design Lib as STEP files"
+  default_prompt: "Use $frc-design-lib to find and download an FRC Design Lib part as STEP."
